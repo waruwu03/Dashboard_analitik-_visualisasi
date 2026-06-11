@@ -1,5 +1,8 @@
 import logging
+import sys
 from datetime import datetime
+from pathlib import Path
+from urllib.parse import quote_plus
 
 import numpy as np
 import pandas as pd
@@ -9,40 +12,80 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sqlalchemy import create_engine, text
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s  %(levelname)-8s  %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 logger = logging.getLogger('data-mining-engine')
 
-CONFIG = dotenv_values('.env')
+# ---------------------------------------------------------------------------
+# Configuration — read .env from project root (2 levels up from this file)
+# ---------------------------------------------------------------------------
+_HERE = Path(__file__).resolve()
+_PROJECT_ROOT = _HERE.parent.parent.parent  # app/DataMining/ → project root
 
-DB_USER = CONFIG.get('DB_USERNAME', 'root')
-DB_PASSWORD = CONFIG.get('DB_PASSWORD', '')
-DB_HOST = CONFIG.get('DB_HOST', '127.0.0.1')
-DB_PORT = CONFIG.get('DB_PORT', '3306')
-DB_NAME = CONFIG.get('DB_DATABASE', 'e-commerce_dataset')
+CONFIG = dotenv_values(_PROJECT_ROOT / '.env')
 
-CONNECTION_STRING = (
-    f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+_DB_USER = CONFIG.get('DB_USERNAME', 'root')
+_DB_PASS = CONFIG.get('DB_PASSWORD', '')
+_DB_HOST = CONFIG.get('DB_HOST', '127.0.0.1')
+_DB_PORT = CONFIG.get('DB_PORT', '3306')
+_DB_NAME = CONFIG.get('DB_DATABASE', 'laravel')
+
+# URL-encode credentials to handle special characters safely
+_CONNECTION_STRING = (
+    f"mysql+pymysql://{quote_plus(_DB_USER)}:{quote_plus(_DB_PASS)}"
+    f"@{_DB_HOST}:{_DB_PORT}/{quote_plus(_DB_NAME)}?charset=utf8mb4"
 )
 
 
+# ---------------------------------------------------------------------------
+# Database helpers
+# ---------------------------------------------------------------------------
 def get_engine():
-    return create_engine(CONNECTION_STRING, pool_pre_ping=True)
+    return create_engine(_CONNECTION_STRING, pool_pre_ping=True)
 
 
 def load_data(engine):
+    logger.info('Loading orders, order_items, and customers from database…')
     with engine.connect() as conn:
-        logger.info('Loading raw orders and items from database')
-        orders = pd.read_sql(text('SELECT order_id, customer_id, order_status, order_purchase_timestamp FROM orders'), conn)
-        order_items = pd.read_sql(text('SELECT order_id, product_id, price, freight_value FROM order_items'), conn)
-        customers = pd.read_sql(text('SELECT customer_id, customer_unique_id FROM customers'), conn)
+        orders = pd.read_sql(
+            text(
+                'SELECT order_id, customer_id, order_status, order_purchase_timestamp '
+                'FROM orders'
+            ),
+            conn,
+        )
+        order_items = pd.read_sql(
+            text('SELECT order_id, product_id, price, freight_value FROM order_items'),
+            conn,
+        )
+        customers = pd.read_sql(
+            text('SELECT customer_id, customer_unique_id FROM customers'),
+            conn,
+        )
+    logger.info(
+        f'Loaded {len(orders):,} orders | {len(order_items):,} items | {len(customers):,} customers'
+    )
     return orders, order_items, customers
 
 
-def build_rfm(orders: pd.DataFrame, order_items: pd.DataFrame, customers: pd.DataFrame):
-    logger.info('Build RFM table for customers')
+# ---------------------------------------------------------------------------
+# K-Means Clustering — RFM Segmentation
+# ---------------------------------------------------------------------------
+def build_rfm(
+    orders: pd.DataFrame,
+    order_items: pd.DataFrame,
+    customers: pd.DataFrame,
+) -> pd.DataFrame:
+    logger.info('Building RFM table…')
 
-    orders = orders.dropna(subset=['order_purchase_timestamp'])
+    orders = orders.dropna(subset=['order_purchase_timestamp']).copy()
     orders['order_purchase_timestamp'] = pd.to_datetime(orders['order_purchase_timestamp'])
 
     order_totals = (
@@ -55,7 +98,8 @@ def build_rfm(orders: pd.DataFrame, order_items: pd.DataFrame, customers: pd.Dat
     reference_date = order_data['order_purchase_timestamp'].max() + pd.Timedelta(days=1)
 
     customer_rfm = (
-        order_data.groupby('customer_id', as_index=False)
+        order_data
+        .groupby('customer_id', as_index=False)
         .agg(
             recency_days=('order_purchase_timestamp', lambda x: (reference_date - x.max()).days),
             frequency=('order_id', 'nunique'),
@@ -64,130 +108,166 @@ def build_rfm(orders: pd.DataFrame, order_items: pd.DataFrame, customers: pd.Dat
     )
     customer_rfm['monetary'] = customer_rfm['monetary'].fillna(0.0)
 
-    customer_rfm = customer_rfm.merge(customers[['customer_id', 'customer_unique_id']], on='customer_id', how='left')
+    # Map to customer_unique_id
+    customer_rfm = customer_rfm.merge(
+        customers[['customer_id', 'customer_unique_id']], on='customer_id', how='left'
+    )
     customer_rfm = customer_rfm.dropna(subset=['customer_unique_id'])
+    logger.info(f'RFM computed for {len(customer_rfm):,} unique customers.')
 
-    logger.info('Standardizing RFM for clustering')
+    # Standardise & cluster
+    logger.info('Running K-Means (k=4)…')
     scaler = StandardScaler()
     features = scaler.fit_transform(customer_rfm[['recency_days', 'frequency', 'monetary']])
 
     kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
     customer_rfm['cluster'] = kmeans.fit_predict(features)
 
-    logger.info('Mapping clustering labels to customer segments')
+    # Label clusters by composite score (low recency = good, high F & M = good)
     cluster_summary = (
-        customer_rfm.groupby('cluster')
+        customer_rfm
+        .groupby('cluster')
         .agg(
             avg_recency=('recency_days', 'mean'),
             avg_frequency=('frequency', 'mean'),
-            avg_monetary=('monetary', 'mean')
+            avg_monetary=('monetary', 'mean'),
         )
         .reset_index()
     )
-
     cluster_summary['score'] = (
-        -cluster_summary['avg_recency'].rank(ascending=False) +
-        cluster_summary['avg_frequency'].rank(ascending=True) +
-        cluster_summary['avg_monetary'].rank(ascending=True)
+        -cluster_summary['avg_recency'].rank(ascending=False)  # lower recency = better
+        + cluster_summary['avg_frequency'].rank(ascending=True)
+        + cluster_summary['avg_monetary'].rank(ascending=True)
     )
     cluster_summary = cluster_summary.sort_values('score', ascending=False)
 
-    labels = ['Champions', 'Loyal', 'At Risk', 'Hibernating']
-    cluster_order = dict(zip(cluster_summary['cluster'].tolist(), labels))
+    segment_labels = ['Champions', 'Loyal', 'At Risk', 'Hibernating']
+    cluster_order = dict(zip(cluster_summary['cluster'].tolist(), segment_labels))
     customer_rfm['segment_label'] = customer_rfm['cluster'].map(cluster_order)
 
-    result = customer_rfm[['customer_unique_id', 'segment_label', 'recency_days', 'frequency', 'monetary']].rename(
-        columns={'recency_days': 'recency'}
-    )
-    return result
+    logger.info('Segment distribution:')
+    for label, count in customer_rfm['segment_label'].value_counts().items():
+        logger.info(f'  {label}: {count:,}')
+
+    return customer_rfm[
+        ['customer_unique_id', 'segment_label', 'recency_days', 'frequency', 'monetary']
+    ].rename(columns={'recency_days': 'recency'})
 
 
-def save_customer_segments(engine, customer_segments: pd.DataFrame):
-    logger.info('Writing customer segments to database')
+def save_customer_segments(engine, customer_segments: pd.DataFrame) -> None:
+    logger.info(f'Writing {len(customer_segments):,} customer segments to database…')
+    customer_segments = customer_segments.copy()
     customer_segments['updated_at'] = datetime.utcnow()
     with engine.begin() as conn:
         conn.execute(text('TRUNCATE TABLE customer_segments'))
         customer_segments.to_sql('customer_segments', conn, if_exists='append', index=False)
+    logger.info('customer_segments table updated.')
 
 
-def build_product_recommendations(order_items: pd.DataFrame):
-    logger.info('Building transaction basket matrix')
+# ---------------------------------------------------------------------------
+# Apriori — Market Basket Analysis
+# ---------------------------------------------------------------------------
+def build_product_recommendations(order_items: pd.DataFrame) -> pd.DataFrame:
+    logger.info('Building transaction basket matrix for Apriori…')
+
     transactions = order_items.groupby('order_id')['product_id'].apply(list).tolist()
-    unique_products = sorted(set(order_items['product_id'].tolist()))
+    unique_products = sorted(set(order_items['product_id'].dropna().tolist()))
 
+    logger.info(f'  {len(transactions):,} transactions, {len(unique_products):,} unique products')
+
+    # One-hot encode
     te = pd.DataFrame(
-        [{product: (product in transaction) for product in unique_products} for transaction in transactions]
+        [{p: (p in tx) for p in unique_products} for tx in transactions],
+        columns=unique_products,
+        dtype=bool,
     )
 
-    logger.info('Running Apriori algorithm')
+    logger.info('Running Apriori (min_support=0.02)…')
     frequent_itemsets = apriori(te, min_support=0.02, use_colnames=True)
+
     if frequent_itemsets.empty:
-        logger.warning('No frequent itemsets found with min_support=0.02')
+        logger.warning('No frequent itemsets found — try lowering min_support.')
         return pd.DataFrame(columns=['product_id', 'recommended_product_id', 'confidence', 'support'])
+
+    logger.info(f'  Found {len(frequent_itemsets):,} frequent itemsets.')
 
     rules = association_rules(frequent_itemsets, metric='confidence', min_threshold=0.5)
     if rules.empty:
-        logger.warning('No association rules found with confidence >= 0.5')
+        logger.warning('No association rules with confidence ≥ 0.5.')
         return pd.DataFrame(columns=['product_id', 'recommended_product_id', 'confidence', 'support'])
 
-    rules = rules.assign(
-        antecedent=lambda df: df['antecedents'].apply(lambda x: sorted(list(x))),
-        consequent=lambda df: df['consequents'].apply(lambda x: sorted(list(x)))
-    )
+    logger.info(f'  Generated {len(rules):,} association rules.')
 
     rows = []
     for _, row in rules.iterrows():
-        for antecedent in row['antecedent']:
-            for consequent in row['consequent']:
-                rows.append({
-                    'product_id': antecedent,
-                    'recommended_product_id': consequent,
-                    'confidence': float(row['confidence']),
-                    'support': float(row['support']),
-                })
+        for ant in sorted(row['antecedents']):
+            for con in sorted(row['consequents']):
+                if ant != con:
+                    rows.append({
+                        'product_id': ant,
+                        'recommended_product_id': con,
+                        'confidence': float(row['confidence']),
+                        'support': float(row['support']),
+                    })
 
-    recommendations = pd.DataFrame(rows)
     recommendations = (
-        recommendations.sort_values(['product_id', 'confidence', 'support'], ascending=[True, False, False])
+        pd.DataFrame(rows)
+        .sort_values(['product_id', 'confidence', 'support'], ascending=[True, False, False])
         .drop_duplicates(['product_id', 'recommended_product_id'])
-    )
-
-    final = (
-        recommendations.groupby('product_id')
+        .groupby('product_id')
         .head(3)
         .reset_index(drop=True)
     )
-    return final
+    logger.info(f'  {len(recommendations):,} product recommendation pairs retained (top-3 per product).')
+    return recommendations
 
 
-def save_product_recommendations(engine, recommendations: pd.DataFrame):
-    logger.info('Writing product recommendations to database')
+def save_product_recommendations(engine, recommendations: pd.DataFrame) -> None:
     if recommendations.empty:
-        logger.warning('Product recommendation table is empty; skipping insert.')
+        logger.warning('Recommendations table is empty — skipping insert.')
         return
+    logger.info(f'Writing {len(recommendations):,} product recommendations to database…')
+    recommendations = recommendations.copy()
     recommendations['updated_at'] = datetime.utcnow()
     with engine.begin() as conn:
         conn.execute(text('TRUNCATE TABLE product_recommendations'))
         recommendations.to_sql('product_recommendations', conn, if_exists='append', index=False)
+    logger.info('product_recommendations table updated.')
 
 
-def run():
-    logger.info('Starting data mining engine')
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def run() -> None:
+    logger.info('=' * 60)
+    logger.info('  Olist Data Mining Engine — starting')
+    logger.info(f'  DB: {_DB_HOST}:{_DB_PORT}/{_DB_NAME}')
+    logger.info('=' * 60)
+
     engine = get_engine()
 
     orders, order_items, customers = load_data(engine)
-    customer_segments = build_rfm(orders, order_items, customers)
-    save_customer_segments(engine, customer_segments)
 
-    product_recommendations = build_product_recommendations(order_items)
-    save_product_recommendations(engine, product_recommendations)
+    logger.info('-' * 60)
+    logger.info('PHASE 1 — K-Means RFM Segmentation')
+    logger.info('-' * 60)
+    segments = build_rfm(orders, order_items, customers)
+    save_customer_segments(engine, segments)
 
-    logger.info('Data mining engine completed successfully')
+    logger.info('-' * 60)
+    logger.info('PHASE 2 — Apriori Market Basket Analysis')
+    logger.info('-' * 60)
+    recs = build_product_recommendations(order_items)
+    save_product_recommendations(engine, recs)
+
+    logger.info('=' * 60)
+    logger.info('  Data mining engine completed successfully.')
+    logger.info('=' * 60)
 
 
 if __name__ == '__main__':
     try:
         run()
     except Exception as exc:
-        logger.exception('Data mining script failed: %s', exc)
-        raise
+        logger.exception('Fatal error in data mining engine: %s', exc)
+        sys.exit(1)
