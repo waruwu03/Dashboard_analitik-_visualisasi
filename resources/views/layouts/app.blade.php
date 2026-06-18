@@ -15,6 +15,11 @@
     <!-- ApexCharts -->
     <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.0/dist/apexcharts.min.js"></script>
 
+    <!-- Leaflet.js -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body>
@@ -419,16 +424,43 @@
                     },
                 });
 
-                clearInterval(stepInterval);
                 const data = await response.json();
 
-                // Mark all steps complete
-                steps.forEach(s => document.getElementById(s)?.classList.add('active', 'done'));
+                if (response.status === 429) {
+                    showToast('⚠️ ' + data.message, 'error');
+                    clearInterval(stepInterval);
+                    closeProgress();
+                    return;
+                }
 
                 if (data.success) {
-                    showToast('✅ Data mining berhasil! Memuat ulang…', 'success');
-                    setTimeout(() => window.location.reload(), 1500);
+                    showToast('✅ ' + data.message, 'success');
+                    
+                    // Start polling status
+                    const pollInterval = setInterval(async () => {
+                        try {
+                            const statRes = await fetch('/data-mining/status');
+                            const statData = await statRes.json();
+                            
+                            if (statData.status === 'completed') {
+                                clearInterval(pollInterval);
+                                clearInterval(stepInterval);
+                                steps.forEach(s => document.getElementById(s)?.classList.add('active', 'done'));
+                                showToast('✅ Data mining selesai! Memuat ulang…', 'success');
+                                setTimeout(() => window.location.reload(), 1500);
+                            } else if (statData.status === 'failed') {
+                                clearInterval(pollInterval);
+                                clearInterval(stepInterval);
+                                showToast('❌ Data mining gagal. Periksa log.', 'error');
+                                closeProgress();
+                            }
+                        } catch (err) {
+                            console.error('Polling error', err);
+                        }
+                    }, 5000);
+
                 } else {
+                    clearInterval(stepInterval);
                     showToast('❌ ' + (data.message || 'Data mining gagal'), 'error');
                     closeProgress();
                 }

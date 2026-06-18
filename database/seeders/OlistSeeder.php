@@ -33,6 +33,21 @@ class OlistSeeder extends Seeder
      * Import order matters because of foreign-key constraints.
      */
     private const TABLES = [
+        // 0. Geolocations (no FK dependencies)
+        'geolocations' => [
+            'file'      => 'olist_geolocation_dataset.csv',
+            'nullable'  => [],
+            'datetimes' => [],
+            'renames'   => [],
+            'skip_pk'   => true, // auto-increment id, no composite PK from CSV
+        ],
+        // 0.5. Product Category Translations (no FK dependencies)
+        'product_category_name_translations' => [
+            'file'      => 'product_category_name_translation.csv',
+            'nullable'  => [],
+            'datetimes' => [],
+            'renames'   => [],
+        ],
         // 1. Customers (no FK dependencies)
         'customers' => [
             'file'      => 'olist_customers_dataset.csv',
@@ -167,6 +182,9 @@ class OlistSeeder extends Seeder
             $this->command->warn("   Empty file: {$path}");
             return;
         }
+
+        // Remove BOM from the first header if present (UTF-8 BOM is \xEF\xBB\xBF)
+        $headers[0] = preg_replace('/^[\xef\xbb\xbf]+/', '', $headers[0]);
         $headers = array_map('trim', $headers);
 
         // Apply column renames on headers
