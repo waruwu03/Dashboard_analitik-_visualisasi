@@ -33,7 +33,14 @@ class RunDataMining extends Command
         $this->line("  Script: <comment>{$script}</comment>");
         $this->newLine();
 
-        $process = new Process([$pythonBin, $script], base_path());
+        $env = getenv();
+        if (!isset($env['SystemRoot']) && isset($_SERVER['SystemRoot'])) {
+            $env['SystemRoot'] = $_SERVER['SystemRoot'];
+        } elseif (!isset($env['SystemRoot'])) {
+            $env['SystemRoot'] = 'C:\\Windows';
+        }
+        
+        $process = new Process([$pythonBin, $script], base_path(), $env);
         $process->setTimeout(3600); // 1-hour timeout for large datasets
 
         $process->run(function (string $type, string $buffer) {

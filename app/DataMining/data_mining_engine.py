@@ -170,20 +170,38 @@ def save_customer_segments(engine, customer_segments: pd.DataFrame) -> None:
 def build_product_recommendations(order_items: pd.DataFrame) -> pd.DataFrame:
     logger.info('Building transaction basket matrix for Apriori…')
 
-    transactions = order_items.groupby('order_id')['product_id'].apply(list).tolist()
-    unique_products = sorted(set(order_items['product_id'].dropna().tolist()))
+    transactions_series = order_items.groupby('order_id')['product_id'].apply(set)
+    num_transactions = len(transactions_series)
 
-    logger.info(f'  {len(transactions):,} transactions, {len(unique_products):,} unique products')
+    # Calculate item frequencies first to filter out rare items
+    item_counts = order_items['product_id'].value_counts()
+    
+    # The most popular item in Olist only has ~527 sales. 
+    # We must use a very low minimum support to find any rules.
+    min_support = 0.0002  # 0.02% support threshold (~20 sales)
+    min_count = int(min_support * num_transactions)
+    
+    frequent_items = set(item_counts[item_counts >= min_count].index)
+    unique_products = sorted(list(frequent_items))
+    
+    logger.info(f'  Total {num_transactions:,} transactions.')
+    logger.info(f'  Filtering to {len(unique_products):,} frequent items (min_count={min_count}) to save memory.')
 
-    # One-hot encode
+    if not unique_products:
+        logger.warning('No items meet the minimum support threshold.')
+        return pd.DataFrame(columns=['product_id', 'recommended_product_id', 'confidence', 'support'])
+
+    # One-hot encode using ONLY the frequent items
+    transactions = transactions_series.tolist()
     te = pd.DataFrame(
         [{p: (p in tx) for p in unique_products} for tx in transactions],
         columns=unique_products,
         dtype=bool,
     )
 
-    logger.info('Running Apriori (min_support=0.02)…')
-    frequent_itemsets = apriori(te, min_support=0.02, use_colnames=True)
+    logger.info(f'Running FPGrowth (min_support={min_support})…')
+    from mlxtend.frequent_patterns import fpgrowth
+    frequent_itemsets = fpgrowth(te, min_support=min_support, use_colnames=True)
 
     if frequent_itemsets.empty:
         logger.warning('No frequent itemsets found — try lowering min_support.')
@@ -191,9 +209,9 @@ def build_product_recommendations(order_items: pd.DataFrame) -> pd.DataFrame:
 
     logger.info(f'  Found {len(frequent_itemsets):,} frequent itemsets.')
 
-    rules = association_rules(frequent_itemsets, metric='confidence', min_threshold=0.5)
+    rules = association_rules(frequent_itemsets, metric='confidence', min_threshold=0.1)
     if rules.empty:
-        logger.warning('No association rules with confidence ≥ 0.5.')
+        logger.warning('No association rules found.')
         return pd.DataFrame(columns=['product_id', 'recommended_product_id', 'confidence', 'support'])
 
     logger.info(f'  Generated {len(rules):,} association rules.')

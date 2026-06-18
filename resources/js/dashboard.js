@@ -17,10 +17,10 @@ const CHART_DEFAULTS = {
     chart: {
         background: 'transparent',
         fontFamily: "'Inter', ui-sans-serif, sans-serif",
-        foreColor: '#64748b',
+        foreColor: '#475569',
     },
     grid: {
-        borderColor: 'rgba(255,255,255,0.05)',
+        borderColor: 'rgba(255,255,255,0.04)',
         strokeDashArray: 4,
     },
 };
@@ -40,29 +40,37 @@ function initRevenueChart(labels, values) {
             height: 288,
             toolbar: { show: false },
             zoom: { enabled: false },
+            dropShadow: {
+                enabled: true,
+                top: 8,
+                left: 0,
+                blur: 16,
+                color: '#7c3aed',
+                opacity: 0.15,
+            },
             animations: {
                 enabled: true,
                 easing: 'easeinout',
-                speed: 800,
-                animateGradually: { enabled: true, delay: 80 },
-                dynamicAnimation: { enabled: true, speed: 300 },
+                speed: 900,
+                animateGradually: { enabled: true, delay: 100 },
+                dynamicAnimation: { enabled: true, speed: 350 },
             },
         },
-        series: [{ name: 'Revenue', data: values }],
+        series: [{ name: 'Pendapatan', data: values }],
         xaxis: {
             categories: labels,
             tickAmount: 8,
             labels: {
                 rotate: -30,
                 rotateAlways: false,
-                style: { fontSize: '11px', colors: '#475569' },
+                style: { fontSize: '10px', colors: '#64748b', fontWeight: 500 },
             },
             axisBorder: { show: false },
             axisTicks: { show: false },
         },
         yaxis: {
             labels: {
-                style: { fontSize: '11px', colors: '#475569' },
+                style: { fontSize: '10px', colors: '#64748b' },
                 formatter: (val) =>
                     new Intl.NumberFormat('id-ID', {
                         notation: 'compact',
@@ -73,24 +81,28 @@ function initRevenueChart(labels, values) {
                     }).format(val),
             },
         },
-        stroke: { curve: 'smooth', width: 2.5, colors: ['#7c3aed'] },
+        stroke: {
+            curve: 'smooth',
+            width: 2.5,
+            colors: ['#7c3aed'],
+        },
         fill: {
             type: 'gradient',
             gradient: {
                 type: 'vertical',
                 shadeIntensity: 1,
                 colorStops: [
-                    { offset: 0,   color: '#7c3aed', opacity: 0.45 },
-                    { offset: 60,  color: '#4f46e5', opacity: 0.15 },
-                    { offset: 100, color: '#0a0d14', opacity: 0 },
+                    { offset: 0,   color: '#7c3aed', opacity: 0.5 },
+                    { offset: 50,  color: '#4f46e5', opacity: 0.15 },
+                    { offset: 100, color: '#080b12', opacity: 0 },
                 ],
             },
         },
         markers: {
             size: 0,
-            hover: { size: 5, sizeOffset: 3 },
+            hover: { size: 6, sizeOffset: 3 },
             colors: ['#7c3aed'],
-            strokeColors: '#1e2130',
+            strokeColors: '#1a2035',
             strokeWidth: 2,
         },
         tooltip: {
@@ -105,7 +117,10 @@ function initRevenueChart(labels, values) {
                     }).format(val),
             },
         },
-        grid: { ...CHART_DEFAULTS.grid, padding: { left: 10, right: 10 } },
+        grid: {
+            ...CHART_DEFAULTS.grid,
+            padding: { left: 8, right: 8, top: 0, bottom: 0 },
+        },
     });
 
     chart.render();
@@ -126,7 +141,12 @@ function initSegmentChart(labels, values) {
             ...CHART_DEFAULTS.chart,
             type: 'donut',
             height: 288,
-            animations: { enabled: true, easing: 'easeinout', speed: 700 },
+            animations: {
+                enabled: true,
+                easing: 'easeinout',
+                speed: 800,
+                animateGradually: { enabled: true, delay: 80 },
+            },
         },
         series: values,
         labels: labels,
@@ -134,21 +154,25 @@ function initSegmentChart(labels, values) {
         dataLabels: {
             enabled: true,
             formatter: (val) => val.toFixed(1) + '%',
-            style: { fontSize: '11px', fontWeight: '600', colors: ['#fff'] },
-            dropShadow: { blur: 4, opacity: 0.3 },
+            style: {
+                fontSize: '11px',
+                fontWeight: '700',
+                colors: ['rgba(255,255,255,0.85)'],
+            },
+            dropShadow: { blur: 4, opacity: 0.4 },
         },
         plotOptions: {
             pie: {
                 donut: {
-                    size: '68%',
+                    size: '70%',
                     labels: {
                         show: true,
                         total: {
                             show: true,
                             label: 'Total',
-                            fontSize: '13px',
+                            fontSize: '12px',
                             fontWeight: 600,
-                            color: '#94a3b8',
+                            color: '#475569',
                             formatter: (w) =>
                                 new Intl.NumberFormat('id-ID').format(
                                     w.globals.seriesTotals.reduce((a, b) => a + b, 0)
@@ -156,21 +180,21 @@ function initSegmentChart(labels, values) {
                         },
                         value: {
                             fontSize: '22px',
-                            fontWeight: 700,
-                            color: '#e2e8f0',
+                            fontWeight: 800,
+                            color: '#f1f5f9',
                             formatter: (val) => new Intl.NumberFormat('id-ID').format(val),
                         },
                     },
                 },
             },
         },
-        legend: { show: false },   // Using custom HTML legend in Blade
-        stroke: { width: 0 },
+        legend: { show: false },
+        stroke: { width: 2, colors: ['rgba(8,11,18,0.9)'] },
         tooltip: {
             theme: 'dark',
             y: {
                 formatter: (val) =>
-                    new Intl.NumberFormat('id-ID').format(val) + ' customers',
+                    new Intl.NumberFormat('id-ID').format(val) + ' pelanggan',
             },
         },
     });
@@ -182,9 +206,9 @@ function initSegmentChart(labels, values) {
    3. KPI COUNTER ANIMATION
    ================================================================ */
 function animateCounter(el) {
-    const target  = parseInt(el.dataset.target, 10) || 0;
-    const format  = el.dataset.format || 'currency';
-    const duration = 1800;
+    const target   = parseInt(el.dataset.target, 10) || 0;
+    const format   = el.dataset.format || 'currency';
+    const duration = 2000;
     const startTime = performance.now();
 
     function formatValue(val) {
@@ -198,8 +222,8 @@ function animateCounter(el) {
     function step(currentTime) {
         const elapsed  = currentTime - startTime;
         const progress = Math.min(elapsed / duration, 1);
-        // Ease-out cubic
-        const eased    = 1 - Math.pow(1 - progress, 3);
+        // Ease-out quart
+        const eased    = 1 - Math.pow(1 - progress, 4);
         el.textContent = formatValue(target * eased);
         if (progress < 1) requestAnimationFrame(step);
     }
@@ -217,14 +241,40 @@ function initCounters() {
                 }
             });
         },
-        { threshold: 0.3 }
+        { threshold: 0.25 }
     );
 
     document.querySelectorAll('.counter').forEach((el) => observer.observe(el));
 }
 
 /* ================================================================
-   4. MBA TABLE SEARCH
+   4. MINI PROGRESS BAR ANIMATION
+   ================================================================ */
+function initProgressBars() {
+    const observer = new IntersectionObserver(
+        (entries) => {
+            entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                    const fills = entry.target.querySelectorAll('.mini-progress-fill');
+                    fills.forEach((fill) => {
+                        const targetW = fill.style.width;
+                        fill.style.width = '0%';
+                        setTimeout(() => {
+                            fill.style.width = targetW;
+                        }, 100);
+                    });
+                    observer.unobserve(entry.target);
+                }
+            });
+        },
+        { threshold: 0.3 }
+    );
+
+    document.querySelectorAll('.kpi-card').forEach((card) => observer.observe(card));
+}
+
+/* ================================================================
+   5. MBA TABLE SEARCH
    ================================================================ */
 function initTableSearch() {
     const input    = document.getElementById('mba-search');
@@ -250,25 +300,59 @@ function initTableSearch() {
 }
 
 /* ================================================================
-   5. COPY TO CLIPBOARD
+   6. COPY TO CLIPBOARD
    ================================================================ */
 window.copyText = function (text) {
     navigator.clipboard.writeText(text).then(() => {
-        // Brief visual feedback — create toast
+        // Remove existing toasts
+        document.querySelectorAll('.toast').forEach(t => t.remove());
+
         const toast = document.createElement('div');
-        toast.textContent = 'Copied!';
-        toast.className = [
-            'fixed bottom-6 right-6 z-50 rounded-xl px-4 py-2 text-sm font-medium text-white',
-            'bg-violet-600 shadow-lg shadow-violet-500/30',
-            'transition-all duration-300',
-        ].join(' ');
+        toast.className = 'toast';
+        toast.innerHTML = `
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+            </svg>
+            ID berhasil disalin!
+        `;
         document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 2000);
+
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(8px)';
+            toast.style.transition = 'all 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, 2000);
     });
 };
 
 /* ================================================================
-   6. INITIALISE EVERYTHING
+   7. FADE-UP ANIMATION ON SCROLL
+   ================================================================ */
+function initFadeUp() {
+    const observer = new IntersectionObserver(
+        (entries) => {
+            entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                    observer.unobserve(entry.target);
+                }
+            });
+        },
+        { threshold: 0.08 }
+    );
+
+    document.querySelectorAll('.dash-card, section > div').forEach((el, i) => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(20px)';
+        el.style.transition = `opacity 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 0.04}s, transform 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 0.04}s`;
+        observer.observe(el);
+    });
+}
+
+/* ================================================================
+   8. INITIALISE EVERYTHING
    ================================================================ */
 document.addEventListener('DOMContentLoaded', () => {
     const data = window.DASHBOARD_DATA || {};
@@ -285,11 +369,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // UX
     initCounters();
+    initProgressBars();
     initTableSearch();
 
-    // Fade-up animation for KPI cards
+    // KPI card fade-up
     document.querySelectorAll('.kpi-card').forEach((card, i) => {
-        card.style.animationDelay = `${i * 0.06}s`;
+        card.style.animationDelay = `${i * 0.07}s`;
         card.classList.add('fade-up');
     });
 });
